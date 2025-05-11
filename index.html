@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firefighter Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #222; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+        }
+        canvas { 
+            border: 1px solid black; 
+            background-color: #555; /* Fallback if background image fails */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 1920;
+        canvas.height = 1080;
+
+        // Game constants
+        const WIN_SCORE = 20;
+        const SPRITE_SCALE_FACTOR = 1; 
+        const PLAYER_SPEED = 13; 
+        // const PLAYER_FEET_Y = 790; // Old positioning
+        const PLAYER_BOTTOM_Y_PERCENT = 0.90; // Player's bottom at 90% of canvas height
+
+        const MONSTER_BASE_SPEED = 2.8;
+        const MONSTER_SPAWN_INTERVAL = 1700; // ms
+        const MONSTER_SPAWN_HORIZONTAL_PADDING = 50; // Pixels from canvas edge
+
+        const WATER_PARTICLE_SPEED = 20;
+        const WATER_PARTICLE_SIZE = 10; // Adjusted for "longer jet"
+        const PARTICLES_PER_SHOT = 18;  // Increased for "longer jet"
+        const SHOT_SPREAD = 45;       // Increased for "wider jet"
+        const SHOT_COOLDOWN = 220;    // ms
+
+        // Image loading
+        const backgroundImage = new Image();
+        const firefighterImage = new Image();
+        const fireMonsterImage = new Image();
+        let imagesToLoad = 3; 
+
+        backgroundImage.src = 'woodland.png';
+        firefighterImage.src = 'firefighter.gif'; 
+        fireMonsterImage.src = 'fire-monster.gif';
+
+        // Game state variables
+        let player = {}; 
+        let monsters = [];
+        let waterParticles = [];
+        let score = 0;
+        let gameOver = false;
+        let gameWon = false;
+        let lastMonsterSpawnTime = 0;
+        let lastShotTime = 0;
+
+        const keys = {
+            left: false,
+            right: false,
+            space: false
+        };
+
+        function imageLoadHandler() {
+            imagesToLoad--;
+            if (imagesToLoad === 0) {
+                console.log("All images loaded successfully.");
+                initializeGame();
+                gameLoop(performance.now()); 
+            }
+        }
+        
+        function imageErrorHandler(e) {
+            console.error("Error loading image: " + e.target.src);
+            ctx.fillStyle = 'red';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Error loading: ${e.target.src.split('/').pop()}`, canvas.width / 2, canvas.height / 2 + imagesToLoad * 30);
+        }
+
+        backgroundImage.onload = imageLoadHandler;
+        firefighterImage.onload = imageLoadHandler;
+        fireMonsterImage.onload = imageLoadHandler;
+        
+        backgroundImage.onerror = imageErrorHandler;
+        firefighterImage.onerror = imageErrorHandler;
+        fireMonsterImage.onerror = imageErrorHandler;
+
+
+        function initializeGame() {
+            console.log("Initializing game...");
+            if (firefighterImage.naturalWidth === 0 || fireMonsterImage.naturalWidth === 0) {
+                console.error("Images not fully loaded for initialization. Retrying in 100ms.");
+                setTimeout(initializeGame, 100); 
+                return;
+            }
+
+            const playerOriginalWidth = firefighterImage.naturalWidth;
+            const playerOriginalHeight = firefighterImage.naturalHeight;
+            
+            player.width = playerOriginalWidth * SPRITE_SCALE_FACTOR;
+            player.height = playerOriginalHeight * SPRITE_SCALE_FACTOR;
+            player.x = canvas.width / 2 - player.width / 2;
+            
+            const playerBottomTargetY = canvas.height * PLAYER_BOTTOM_Y_PERCENT;
+            player.y = playerBottomTargetY - player.height; // Position based on bottom edge
+            
+            player.image = firefighterImage;
+
+            monsters = [];
+            waterParticles = [];
+            score = 0;
+            gameOver = false;
+            gameWon = false;
+            lastMonsterSpawnTime = performance.now();
+            lastShotTime = 0;
+            
+            keys.left = false;
+            keys.right = false;
+            keys.space = false;
+
+            canvas.onclick = null; 
+        }
+
+        // Event Listeners
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = true;
+            if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = true;
+            if (e.key === ' ') {
+                keys.space = true;
+                e.preventDefault(); 
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = false;
+            if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = false;
+            if (e.key === ' ') keys.space = false;
+        });
+
+        function spawnMonster() {
+            if (!fireMonsterImage.complete || fireMonsterImage.naturalWidth === 0) {
+                return; 
+            }
+            const monsterOriginalWidth = fireMonsterImage.naturalWidth;
+            const monsterOriginalHeight = fireMonsterImage.naturalHeight;
+
+            const monsterWidth = monsterOriginalWidth * SPRITE_SCALE_FACTOR;
+            const monsterHeight = monsterOriginalHeight * SPRITE_SCALE_FACTOR;
+            
+            const minSpawnX = MONSTER_SPAWN_HORIZONTAL_PADDING;
+            const maxSpawnX = canvas.width - monsterWidth - MONSTER_SPAWN_HORIZONTAL_PADDING;
+            const spawnableWidth = maxSpawnX - minSpawnX;
+            
+            let x;
+            if (spawnableWidth > 0) {
+                x = minSpawnX + Math.random() * spawnableWidth;
+            } else { // Fallback if padding is too large for canvas width (shouldn't happen here)
+                x = canvas.width / 2 - monsterWidth / 2;
+            }
+
+            const y = 0 - monsterHeight; 
+            monsters.push({
+                x: x,
+                y: y,
+                width: monsterWidth,
+                height: monsterHeight,
+                image: fireMonsterImage,
+                speed: MONSTER_BASE_SPEED + Math.random() * 1.8 
+            });
+        }
+
+        function shootWater() {
+            const currentTime = performance.now();
+            if (currentTime - lastShotTime > SHOT_COOLDOWN) {
+                lastShotTime = currentTime;
+                
+                const nozzleXOffset = player.width * 0.25; 
+                const nozzleYOffset = player.height * 0.55; 
+
+                const nozzleX = player.x + nozzleXOffset; 
+                const nozzleY = player.y + nozzleYOffset;
+
+                for (let i = 0; i < PARTICLES_PER_SHOT; i++) {
+                    waterParticles.push({
+                        x: nozzleX - WATER_PARTICLE_SIZE / 2 + (Math.random() - 0.5) * SHOT_SPREAD,
+                        // Tighter vertical stacking for a "longer" initial jet appearance
+                        y: nozzleY - (i * WATER_PARTICLE_SIZE * 0.7) - WATER_PARTICLE_SIZE / 2, 
+                        width: WATER_PARTICLE_SIZE,
+                        height: WATER_PARTICLE_SIZE,
+                        color: 'rgb(0, 200, 200)' 
+                    });
+                }
+            }
+        }
+
+        function update(currentTime) { 
+            if (gameOver || gameWon) {
+                canvas.onclick = () => {
+                    if (gameOver || gameWon) { 
+                        initializeGame();
+                    }
+                };
+                return;
+            }
+
+            // Player movement
+            if (keys.left) {
+                player.x -= PLAYER_SPEED;
+            }
+            if (keys.right) {
+                player.x += PLAYER_SPEED;
+            }
+            // Boundary checks for player
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+            // Player shooting
+            if (keys.space) {
+                shootWater();
+            }
+
+            // Update water particles
+            for (let i = waterParticles.length - 1; i >= 0; i--) {
+                waterParticles[i].y -= WATER_PARTICLE_SPEED;
+                if (waterParticles[i].y + waterParticles[i].height < 0) {
+                    waterParticles.splice(i, 1); 
+                }
+            }
+
+            // Monster spawning
+            if (currentTime - lastMonsterSpawnTime > MONSTER_SPAWN_INTERVAL) {
+                spawnMonster();
+                lastMonsterSpawnTime = currentTime;
+            }
+
+            // Update monsters and check collisions
+            for (let i = monsters.length - 1; i >= 0; i--) {
+                const monster = monsters[i];
+                monster.y += monster.speed;
+
+                // Monster reaches bottom edge
+                if (monster.y + monster.height >= canvas.height) { // Check if any part of monster is at or below bottom
+                    gameOver = true;
+                    return; 
+                }
+
+                // Check collision: water particles vs monster
+                for (let j = waterParticles.length - 1; j >= 0; j--) {
+                    const particle = waterParticles[j];
+                    if (
+                        particle.x < monster.x + monster.width &&
+                        particle.x + particle.width > monster.x &&
+                        particle.y < monster.y + monster.height &&
+                        particle.y + particle.height > monster.y
+                    ) {
+                        monsters.splice(i, 1);      
+                        waterParticles.splice(j, 1); 
+                        score++;
+                        if (score >= WIN_SCORE) {
+                            gameWon = true;
+                        }
+                        break; 
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (backgroundImage.complete && backgroundImage.naturalWidth > 0) {
+                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = 'white';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Loading assets...', canvas.width / 2, canvas.height / 2 - 30);
+            }
+
+            if (player.image && player.image.complete && player.image.naturalWidth > 0) {
+                ctx.drawImage(player.image, player.x, player.y, player.width, player.height);
+            }
+
+            monsters.forEach(monster => {
+                if (monster.image && monster.image.complete && monster.image.naturalWidth > 0) {
+                    ctx.drawImage(monster.image, monster.x, monster.y, monster.width, monster.height);
+                }
+            });
+
+            waterParticles.forEach(particle => {
+                ctx.fillStyle = particle.color;
+                ctx.fillRect(particle.x, particle.y, particle.width, particle.height);
+            });
+
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.font = '48px "Arial Black", Gadget, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.strokeText('Score: ' + score, 20, 20);
+            ctx.fillText('Score: ' + score, 20, 20);
+
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.font = '90px "Arial Black", Gadget, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                ctx.fillStyle = 'red';
+                ctx.strokeText('GAME OVER!', canvas.width / 2, canvas.height / 2 - 70);
+                ctx.fillText('GAME OVER!', canvas.width / 2, canvas.height / 2 - 70);
+                
+                ctx.font = '50px Arial';
+                ctx.fillStyle = 'white';
+                ctx.strokeText('Killed: ' + score + ' / ' + WIN_SCORE, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('Killed: ' + score + ' / ' + WIN_SCORE, canvas.width / 2, canvas.height / 2 + 20);
+                
+                ctx.font = '40px Arial';
+                ctx.strokeText('Click to Restart', canvas.width / 2, canvas.height / 2 + 90);
+                ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 90);
+
+            } else if (gameWon) {
+                ctx.fillStyle = 'rgba(0, 80, 0, 0.75)'; 
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.font = '90px "Arial Black", Gadget, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.fillStyle = '#33FF33'; 
+                ctx.strokeText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 70);
+                ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 70);
+                
+                ctx.font = '50px Arial';
+                ctx.fillStyle = 'white';
+                ctx.strokeText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
+
+                ctx.font = '40px Arial';
+                ctx.strokeText('Click to Restart', canvas.width / 2, canvas.height / 2 + 90);
+                ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 90);
+            }
+        }
+
+        let lastFrameTime = 0;
+        function gameLoop(timestamp) { 
+            if (imagesToLoad === 0) { 
+                update(timestamp); 
+                draw();
+            } else {
+                ctx.fillStyle = '#333';
+                ctx.fillRect(0,0,canvas.width, canvas.height);
+                ctx.fillStyle = 'white';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`Loading assets... (${3 - imagesToLoad}/3)`, canvas.width / 2, canvas.height / 2);
+            }
+            requestAnimationFrame(gameLoop);
+        }
+    </script>
+</body>
+</html>
