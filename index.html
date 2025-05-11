@@ -8,20 +8,22 @@
         body { 
             margin: 0; 
             overflow: hidden; 
-            background-color: #222; 
+            background-color: #222; /* This will be the color of letter/pillar-boxing */
             display: flex; 
             justify-content: center; 
             align-items: center; 
             height: 100vh; 
-            -webkit-user-select: none; /* Safari */
-            -ms-user-select: none; /* IE 10 and IE 11 */
-            user-select: none; /* Standard syntax */
+            -webkit-user-select: none; 
+            -ms-user-select: none; 
+            user-select: none; 
         }
         canvas { 
-            border: 1px solid black; /* Helps visualize canvas boundary */
+            border: 1px solid black; 
             background-color: #555; 
-            /* Canvas width and height are set in JavaScript to 1920x1080.
-               No CSS width/height here ensures it uses the JS-set dimensions. */
+            /* Actual width/height set by JS, style width/height for scaling */
+            image-rendering: pixelated; /* Keeps pixel art crisp when scaled */
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
         }
     </style>
 </head>
@@ -32,12 +34,15 @@
         // Canvas setup
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = 1920; 
-        canvas.height = 1080;
+        
+        // Native game resolution
+        const NATIVE_WIDTH = 1920;
+        const NATIVE_HEIGHT = 1080;
+
+        canvas.width = NATIVE_WIDTH; 
+        canvas.height = NATIVE_HEIGHT;
 
         // --- DEBUG FLAG ---
-        // Set to true to always show touch controls on screen, even on desktop for layout testing.
-        // Set to false for normal behavior (buttons only on touch devices).
         const DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS = true; 
         // --- END DEBUG FLAG ---
 
@@ -81,25 +86,54 @@
             space: false
         };
 
-        // Touch controls
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (navigator.msMaxTouchPoints > 0);
         let touchControls = {};
         let activeTouches = {}; 
 
-        const BUTTON_HEIGHT = 100;
-        const BUTTON_WIDTH = 180;
-        const BUTTON_PADDING = 30;
-        const BUTTON_FONT = "bold 40px Arial";
+        const BUTTON_HEIGHT = 100; // These are in NATIVE_HEIGHT units
+        const BUTTON_WIDTH = 180;  // These are in NATIVE_WIDTH units
+        const BUTTON_PADDING = 30; // These are in NATIVE units
+        const BUTTON_FONT = "bold 40px Arial"; // Font size relative to NATIVE resolution
         const BUTTON_COLOR = "rgba(100, 100, 100, 0.7)";
         const BUTTON_TEXT_COLOR = "white";
 
         let restartButton = {};
 
+        function resizeCanvas() {
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            const nativeAspectRatio = NATIVE_WIDTH / NATIVE_HEIGHT;
+
+            let newCanvasWidth = windowWidth;
+            let newCanvasHeight = windowHeight;
+
+            const windowAspectRatio = windowWidth / windowHeight;
+
+            if (windowAspectRatio > nativeAspectRatio) {
+                // Window is wider than game, so height is the limiting factor
+                newCanvasHeight = windowHeight;
+                newCanvasWidth = newCanvasHeight * nativeAspectRatio;
+            } else {
+                // Window is taller (or same aspect ratio), so width is the limiting factor
+                newCanvasWidth = windowWidth;
+                newCanvasHeight = newCanvasWidth / nativeAspectRatio;
+            }
+
+            canvas.style.width = `${newCanvasWidth}px`;
+            canvas.style.height = `${newCanvasHeight}px`;
+            
+            // The internal resolution remains NATIVE_WIDTH x NATIVE_HEIGHT
+            // canvas.width = NATIVE_WIDTH;
+            // canvas.height = NATIVE_HEIGHT;
+            // No need to reset these here, they are set once initially.
+        }
+
 
         function defineButtons() {
+            // All button positions and sizes are defined in the NATIVE coordinate system
             touchControls.left = {
                 x: BUTTON_PADDING,
-                y: canvas.height - BUTTON_HEIGHT - BUTTON_PADDING,
+                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
                 width: BUTTON_WIDTH,
                 height: BUTTON_HEIGHT,
                 label: "◀",
@@ -107,15 +141,15 @@
             };
             touchControls.right = {
                 x: BUTTON_PADDING + BUTTON_WIDTH + BUTTON_PADDING,
-                y: canvas.height - BUTTON_HEIGHT - BUTTON_PADDING,
+                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
                 width: BUTTON_WIDTH,
                 height: BUTTON_HEIGHT,
                 label: "▶",
                 key: "right"
             };
             touchControls.shoot = {
-                x: canvas.width - BUTTON_WIDTH - BUTTON_PADDING,
-                y: canvas.height - BUTTON_HEIGHT - BUTTON_PADDING,
+                x: NATIVE_WIDTH - BUTTON_WIDTH - BUTTON_PADDING,
+                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
                 width: BUTTON_WIDTH,
                 height: BUTTON_HEIGHT,
                 label: "SHOOT",
@@ -123,12 +157,12 @@
             };
 
             restartButton = {
-                x: canvas.width / 2 - 125,
-                y: canvas.height / 2 + 130, 
+                x: NATIVE_WIDTH / 2 - 125,
+                y: NATIVE_HEIGHT / 2 + 130, 
                 width: 250,
                 height: 80,
                 label: "RESTART",
-                color: "rgba(0, 150, 0, 0.85)", // Made slightly more opaque
+                color: "rgba(0, 150, 0, 0.85)",
                 textColor: "white",
                 font: "bold 40px Arial"
             };
@@ -139,8 +173,12 @@
             imagesToLoad--;
             if (imagesToLoad === 0) {
                 console.log("All images loaded successfully.");
-                console.log("Is touch device? " + isTouchDevice); // For debugging
-                defineButtons();
+                console.log("Is touch device? " + isTouchDevice); 
+                
+                defineButtons(); // Define buttons based on NATIVE_WIDTH/HEIGHT
+                resizeCanvas(); // Initial resize
+                window.addEventListener('resize', resizeCanvas); // Add resize listener
+
                 initializeGame();
                 addInputListeners();
                 gameLoop(performance.now()); 
@@ -152,7 +190,7 @@
             ctx.fillStyle = 'red';
             ctx.font = '24px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText(`Error loading: ${e.target.src.split('/').pop()}`, canvas.width / 2, canvas.height / 2 + imagesToLoad * 30);
+            ctx.fillText(`Error loading: ${e.target.src.split('/').pop()}`, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + imagesToLoad * 30);
         }
 
         backgroundImage.onload = imageLoadHandler;
@@ -176,9 +214,9 @@
             
             player.width = playerOriginalWidth * SPRITE_SCALE_FACTOR;
             player.height = playerOriginalHeight * SPRITE_SCALE_FACTOR;
-            player.x = canvas.width / 2 - player.width / 2;
+            player.x = NATIVE_WIDTH / 2 - player.width / 2;
             
-            const playerBottomTargetY = canvas.height * PLAYER_BOTTOM_Y_PERCENT;
+            const playerBottomTargetY = NATIVE_HEIGHT * PLAYER_BOTTOM_Y_PERCENT;
             player.y = playerBottomTargetY - player.height; 
             
             player.image = firefighterImage;
@@ -199,9 +237,10 @@
         }
 
         function getCanvasCoordinates(eventOrTouch, canvasElement) {
-            const rect = canvasElement.getBoundingClientRect();
-            const scaleX = canvasElement.width / rect.width;
-            const scaleY = canvasElement.height / rect.height;
+            const rect = canvasElement.getBoundingClientRect(); // This is the CSS-scaled rect
+            // canvasElement.width/height are NATIVE_WIDTH/HEIGHT (internal resolution)
+            const scaleX = canvasElement.width / rect.width;   
+            const scaleY = canvasElement.height / rect.height;  
             let clientX, clientY;
 
             if (eventOrTouch.clientX !== undefined && eventOrTouch.clientY !== undefined) { 
@@ -216,10 +255,11 @@
             
             const x = (clientX - rect.left) * scaleX;
             const y = (clientY - rect.top) * scaleY;
-            return { x, y };
+            return { x, y }; // These are now in the NATIVE_WIDTH/HEIGHT coordinate space
         }
 
         function isPointInRect(point, rect) {
+            // rect is defined in NATIVE coordinates, point is transformed to NATIVE coordinates
             return point.x >= rect.x && point.x <= rect.x + rect.width &&
                    point.y >= rect.y && point.y <= rect.y + rect.height;
         }
@@ -240,7 +280,7 @@
                 if (e.key === ' ') keys.space = false;
             });
 
-            if (isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) { // Listen for touches if it's a touch device OR we are debugging
+            if (isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) { 
                 canvas.addEventListener('touchstart', (e) => {
                     e.preventDefault();
                     const touches = e.changedTouches;
@@ -317,10 +357,10 @@
             const monsterHeight = monsterOriginalHeight * SPRITE_SCALE_FACTOR;
             
             const minSpawnX = MONSTER_SPAWN_HORIZONTAL_PADDING;
-            const maxSpawnX = canvas.width - monsterWidth - MONSTER_SPAWN_HORIZONTAL_PADDING;
+            const maxSpawnX = NATIVE_WIDTH - monsterWidth - MONSTER_SPAWN_HORIZONTAL_PADDING;
             const spawnableWidth = maxSpawnX - minSpawnX;
             
-            let x = (spawnableWidth > 0) ? (minSpawnX + Math.random() * spawnableWidth) : (canvas.width / 2 - monsterWidth / 2);
+            let x = (spawnableWidth > 0) ? (minSpawnX + Math.random() * spawnableWidth) : (NATIVE_WIDTH / 2 - monsterWidth / 2);
             const y = 0 - monsterHeight; 
             monsters.push({ x, y, width: monsterWidth, height: monsterHeight, image: fireMonsterImage, speed: MONSTER_BASE_SPEED + Math.random() * 1.8 });
         }
@@ -350,7 +390,7 @@
             if (keys.left) player.x -= PLAYER_SPEED;
             if (keys.right) player.x += PLAYER_SPEED;
             if (player.x < 0) player.x = 0;
-            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+            if (player.x + player.width > NATIVE_WIDTH) player.x = NATIVE_WIDTH - player.width;
 
             if (keys.space) shootWater();
 
@@ -367,7 +407,7 @@
             for (let i = monsters.length - 1; i >= 0; i--) {
                 const monster = monsters[i];
                 monster.y += monster.speed;
-                if (monster.y + monster.height >= canvas.height) { 
+                if (monster.y + monster.height >= NATIVE_HEIGHT) { 
                     gameOver = true; return; 
                 }
                 for (let j = waterParticles.length - 1; j >= 0; j--) {
@@ -385,6 +425,7 @@
         }
         
         function drawButton(buttonCtx, btn) {
+            // All drawing happens in NATIVE coordinate space
             buttonCtx.fillStyle = btn.color || BUTTON_COLOR;
             buttonCtx.fillRect(btn.x, btn.y, btn.width, btn.height);
             buttonCtx.fillStyle = btn.textColor || BUTTON_TEXT_COLOR;
@@ -395,13 +436,13 @@
         }
 
         function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT); // Clear the NATIVE_WIDTH x NATIVE_HEIGHT buffer
 
             if (backgroundImage.complete && backgroundImage.naturalWidth > 0) {
-                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+                ctx.drawImage(backgroundImage, 0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
             } else {
                 ctx.fillStyle = 'white'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
-                ctx.fillText('Loading assets...', canvas.width / 2, canvas.height / 2 - 30);
+                ctx.fillText('Loading assets...', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 30);
             }
 
             if (player.image && player.image.complete && player.image.naturalWidth > 0) {
@@ -425,7 +466,6 @@
             ctx.strokeText('Score: ' + score, 20, 20);
             ctx.fillText('Score: ' + score, 20, 20);
 
-            // Draw touch controls if on touch device OR if debug flag is set, AND game is active
             if ((isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) && !gameOver && !gameWon) {
                 for (const btnKey in touchControls) {
                     drawButton(ctx, touchControls[btnKey]);
@@ -433,24 +473,24 @@
             }
 
             if (gameOver) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; ctx.fillRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
                 ctx.font = '90px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 ctx.fillStyle = 'red';
-                ctx.strokeText('GAME OVER!', canvas.width / 2, canvas.height / 2 - 70);
-                ctx.fillText('GAME OVER!', canvas.width / 2, canvas.height / 2 - 70);
+                ctx.strokeText('GAME OVER!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
+                ctx.fillText('GAME OVER!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
                 ctx.font = '50px Arial'; ctx.fillStyle = 'white';
-                ctx.strokeText('Killed: ' + score + ' / ' + WIN_SCORE, canvas.width / 2, canvas.height / 2 + 20);
-                ctx.fillText('Killed: ' + score + ' / ' + WIN_SCORE, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.strokeText('Killed: ' + score + ' / ' + WIN_SCORE, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
+                ctx.fillText('Killed: ' + score + ' / ' + WIN_SCORE, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
                 drawButton(ctx, restartButton); 
             } else if (gameWon) {
-                ctx.fillStyle = 'rgba(0, 80, 0, 0.75)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'rgba(0, 80, 0, 0.75)'; ctx.fillRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
                 ctx.font = '90px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 ctx.fillStyle = '#33FF33';
-                ctx.strokeText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 70);
-                ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 70);
+                ctx.strokeText('YOU WIN!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
+                ctx.fillText('YOU WIN!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
                 ctx.font = '50px Arial'; ctx.fillStyle = 'white';
-                ctx.strokeText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
-                ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 20);
+                ctx.strokeText('Final Score: ' + score, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
+                ctx.fillText('Final Score: ' + score, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
                 drawButton(ctx, restartButton); 
             }
         }
@@ -460,9 +500,9 @@
                 update(timestamp); 
                 draw();
             } else {
-                ctx.fillStyle = '#333'; ctx.fillRect(0,0,canvas.width, canvas.height);
+                ctx.fillStyle = '#333'; ctx.fillRect(0,0,NATIVE_WIDTH, NATIVE_HEIGHT);
                 ctx.fillStyle = 'white'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
-                ctx.fillText(`Loading assets... (${3 - imagesToLoad}/3)`, canvas.width / 2, canvas.height / 2);
+                ctx.fillText(`Loading assets... (${3 - imagesToLoad}/3)`, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2);
             }
             requestAnimationFrame(gameLoop);
         }
