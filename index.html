@@ -8,7 +8,7 @@
         body { 
             margin: 0; 
             overflow: hidden; 
-            background-color: #222; /* This will be the color of letter/pillar-boxing */
+            background-color: #222; 
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -20,8 +20,7 @@
         canvas { 
             border: 1px solid black; 
             background-color: #555; 
-            /* Actual width/height set by JS, style width/height for scaling */
-            image-rendering: pixelated; /* Keeps pixel art crisp when scaled */
+            image-rendering: pixelated; 
             image-rendering: -moz-crisp-edges;
             image-rendering: crisp-edges;
         }
@@ -35,19 +34,15 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Native game resolution
         const NATIVE_WIDTH = 1920;
         const NATIVE_HEIGHT = 1080;
-
         canvas.width = NATIVE_WIDTH; 
         canvas.height = NATIVE_HEIGHT;
 
-        // --- DEBUG FLAG ---
         const DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS = true; 
-        // --- END DEBUG FLAG ---
 
         // Game constants
-        const WIN_SCORE = 20;
+        const WIN_SCORE = 20; // Updated
         const SPRITE_SCALE_FACTOR = 1; 
         const PLAYER_SPEED = 13; 
         const PLAYER_BOTTOM_Y_PERCENT = 0.90; 
@@ -61,15 +56,65 @@
         const PARTICLES_PER_FRAME_WHILE_SHOOTING = 18;
         const SHOT_SPREAD = 45;       
 
-        // Image loading
+        // Updated Button Constants
+        const BUTTON_HEIGHT = 200; 
+        const BUTTON_WIDTH = 200;  
+        const BUTTON_PADDING = 80; 
+        const BUTTON_FONT = "bold 40px Arial"; 
+        const BUTTON_COLOR = "rgba(100, 100, 100, 0.7)";
+        const BUTTON_TEXT_COLOR = "white";
+
+        // Asset Loading
+        let assetsToLoad = 0;
+        let assetsLoaded = 0;
+
         const backgroundImage = new Image();
         const firefighterImage = new Image();
         const fireMonsterImage = new Image();
-        let imagesToLoad = 3; 
+        
+        const bgmSound = new Audio();
+        const shootSound = new Audio();
 
-        backgroundImage.src = 'woodland.png';
-        firefighterImage.src = 'firefighter.gif'; 
-        fireMonsterImage.src = 'fire-monster.gif';
+        function assetLoaded() {
+            assetsLoaded++;
+            if (assetsLoaded === assetsToLoad) {
+                console.log("All assets loaded successfully.");
+                console.log("Is touch device? " + isTouchDevice); 
+                
+                defineButtons(); 
+                resizeCanvas(); 
+                window.addEventListener('resize', resizeCanvas); 
+
+                initializeGame();
+                addInputListeners();
+                gameLoop(performance.now()); 
+            }
+        }
+
+        function prepareAsset(asset, src, isAudio = false) {
+            assetsToLoad++;
+            asset.src = src;
+            if (isAudio) {
+                asset.addEventListener('canplaythrough', assetLoaded, { once: true });
+                asset.addEventListener('error', () => {
+                    console.error("Error loading audio: " + src);
+                    assetLoaded(); // Still count it as "loaded" to not block game start
+                });
+            } else {
+                asset.onload = assetLoaded;
+                asset.onerror = () => {
+                    console.error("Error loading image: " + src);
+                    assetLoaded(); // Still count it as "loaded"
+                };
+            }
+        }
+
+        prepareAsset(backgroundImage, 'woodland.png');
+        prepareAsset(firefighterImage, 'firefighter.gif');
+        prepareAsset(fireMonsterImage, 'fire-monster.gif');
+        prepareAsset(bgmSound, 'bgm.mp3', true);
+        prepareAsset(shootSound, 'shoot.mp3', true);
+
 
         // Game state variables
         let player = {}; 
@@ -79,6 +124,8 @@
         let gameOver = false;
         let gameWon = false;
         let lastMonsterSpawnTime = 0;
+        let bgmPlaying = false;
+        let shootingSoundPlaying = false;
 
         const keys = {
             left: false,
@@ -89,136 +136,48 @@
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (navigator.msMaxTouchPoints > 0);
         let touchControls = {};
         let activeTouches = {}; 
-
-        const BUTTON_HEIGHT = 100; // These are in NATIVE_HEIGHT units
-        const BUTTON_WIDTH = 180;  // These are in NATIVE_WIDTH units
-        const BUTTON_PADDING = 30; // These are in NATIVE units
-        const BUTTON_FONT = "bold 40px Arial"; // Font size relative to NATIVE resolution
-        const BUTTON_COLOR = "rgba(100, 100, 100, 0.7)";
-        const BUTTON_TEXT_COLOR = "white";
-
         let restartButton = {};
 
         function resizeCanvas() {
             const windowWidth = window.innerWidth;
             const windowHeight = window.innerHeight;
             const nativeAspectRatio = NATIVE_WIDTH / NATIVE_HEIGHT;
-
             let newCanvasWidth = windowWidth;
             let newCanvasHeight = windowHeight;
-
             const windowAspectRatio = windowWidth / windowHeight;
 
             if (windowAspectRatio > nativeAspectRatio) {
-                // Window is wider than game, so height is the limiting factor
                 newCanvasHeight = windowHeight;
                 newCanvasWidth = newCanvasHeight * nativeAspectRatio;
             } else {
-                // Window is taller (or same aspect ratio), so width is the limiting factor
                 newCanvasWidth = windowWidth;
                 newCanvasHeight = newCanvasWidth / nativeAspectRatio;
             }
-
             canvas.style.width = `${newCanvasWidth}px`;
             canvas.style.height = `${newCanvasHeight}px`;
-            
-            // The internal resolution remains NATIVE_WIDTH x NATIVE_HEIGHT
-            // canvas.width = NATIVE_WIDTH;
-            // canvas.height = NATIVE_HEIGHT;
-            // No need to reset these here, they are set once initially.
         }
-
 
         function defineButtons() {
-            // All button positions and sizes are defined in the NATIVE coordinate system
-            touchControls.left = {
-                x: BUTTON_PADDING,
-                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
-                width: BUTTON_WIDTH,
-                height: BUTTON_HEIGHT,
-                label: "◀",
-                key: "left"
-            };
-            touchControls.right = {
-                x: BUTTON_PADDING + BUTTON_WIDTH + BUTTON_PADDING,
-                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
-                width: BUTTON_WIDTH,
-                height: BUTTON_HEIGHT,
-                label: "▶",
-                key: "right"
-            };
-            touchControls.shoot = {
-                x: NATIVE_WIDTH - BUTTON_WIDTH - BUTTON_PADDING,
-                y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING,
-                width: BUTTON_WIDTH,
-                height: BUTTON_HEIGHT,
-                label: "SHOOT",
-                key: "space"
-            };
-
-            restartButton = {
-                x: NATIVE_WIDTH / 2 - 125,
-                y: NATIVE_HEIGHT / 2 + 130, 
-                width: 250,
-                height: 80,
-                label: "RESTART",
-                color: "rgba(0, 150, 0, 0.85)",
-                textColor: "white",
-                font: "bold 40px Arial"
-            };
+            touchControls.left = { x: BUTTON_PADDING, y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING, width: BUTTON_WIDTH, height: BUTTON_HEIGHT, label: "◀", key: "left" };
+            touchControls.right = { x: BUTTON_PADDING + BUTTON_WIDTH + BUTTON_PADDING, y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING, width: BUTTON_WIDTH, height: BUTTON_HEIGHT, label: "▶", key: "right" };
+            touchControls.shoot = { x: NATIVE_WIDTH - BUTTON_WIDTH - BUTTON_PADDING, y: NATIVE_HEIGHT - BUTTON_HEIGHT - BUTTON_PADDING, width: BUTTON_WIDTH, height: BUTTON_HEIGHT, label: "SHOOT", key: "space" };
+            restartButton = { x: NATIVE_WIDTH / 2 - 125, y: NATIVE_HEIGHT / 2 + 130, width: 250, height: 80, label: "RESTART", color: "rgba(0, 150, 0, 0.85)", textColor: "white", font: "bold 40px Arial" };
         }
-
-
-        function imageLoadHandler() {
-            imagesToLoad--;
-            if (imagesToLoad === 0) {
-                console.log("All images loaded successfully.");
-                console.log("Is touch device? " + isTouchDevice); 
-                
-                defineButtons(); // Define buttons based on NATIVE_WIDTH/HEIGHT
-                resizeCanvas(); // Initial resize
-                window.addEventListener('resize', resizeCanvas); // Add resize listener
-
-                initializeGame();
-                addInputListeners();
-                gameLoop(performance.now()); 
-            }
-        }
-        
-        function imageErrorHandler(e) {
-            console.error("Error loading image: " + e.target.src);
-            ctx.fillStyle = 'red';
-            ctx.font = '24px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(`Error loading: ${e.target.src.split('/').pop()}`, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + imagesToLoad * 30);
-        }
-
-        backgroundImage.onload = imageLoadHandler;
-        firefighterImage.onload = imageLoadHandler;
-        fireMonsterImage.onload = imageLoadHandler;
-        
-        backgroundImage.onerror = imageErrorHandler;
-        firefighterImage.onerror = imageErrorHandler;
-        fireMonsterImage.onerror = imageErrorHandler;
-
 
         function initializeGame() {
             console.log("Initializing game...");
-            if (firefighterImage.naturalWidth === 0 || fireMonsterImage.naturalWidth === 0) {
+            // Ensure player image is loaded before accessing its dimensions
+            if (firefighterImage.naturalWidth === 0) {
+                 console.warn("Player image not fully loaded for initialization. Retrying in 100ms.");
                 setTimeout(initializeGame, 100); 
                 return;
             }
 
-            const playerOriginalWidth = firefighterImage.naturalWidth;
-            const playerOriginalHeight = firefighterImage.naturalHeight;
-            
-            player.width = playerOriginalWidth * SPRITE_SCALE_FACTOR;
-            player.height = playerOriginalHeight * SPRITE_SCALE_FACTOR;
+            player.width = firefighterImage.naturalWidth * SPRITE_SCALE_FACTOR;
+            player.height = firefighterImage.naturalHeight * SPRITE_SCALE_FACTOR;
             player.x = NATIVE_WIDTH / 2 - player.width / 2;
-            
             const playerBottomTargetY = NATIVE_HEIGHT * PLAYER_BOTTOM_Y_PERCENT;
             player.y = playerBottomTargetY - player.height; 
-            
             player.image = firefighterImage;
 
             monsters = [];
@@ -228,52 +187,58 @@
             gameWon = false;
             lastMonsterSpawnTime = performance.now();
             
-            keys.left = false;
-            keys.right = false;
-            keys.space = false;
+            keys.left = false; keys.right = false; keys.space = false;
             activeTouches = {}; 
 
+            // Audio setup
+            bgmSound.loop = true;
+            bgmSound.volume = 0.3; // Adjust BGM volume as needed
+            shootSound.loop = true;
+            shootSound.volume = 0.5; // Adjust shoot sound volume
+
+            if (bgmPlaying) {
+                bgmSound.pause();
+                bgmPlaying = false;
+            }
+            if (shootingSoundPlaying) {
+                shootSound.pause();
+                shootingSoundPlaying = false;
+            }
+            
+            // Attempt to play BGM - might be blocked by autoplay policies until user interaction
+            if (!bgmPlaying && bgmSound.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+                bgmSound.play().then(() => {
+                    bgmPlaying = true;
+                    console.log("BGM started playing.");
+                }).catch(error => {
+                    console.warn("BGM autoplay was prevented:", error);
+                    // User interaction will be needed to start BGM
+                });
+            }
             canvas.onclick = null; 
         }
 
         function getCanvasCoordinates(eventOrTouch, canvasElement) {
-            const rect = canvasElement.getBoundingClientRect(); // This is the CSS-scaled rect
-            // canvasElement.width/height are NATIVE_WIDTH/HEIGHT (internal resolution)
+            const rect = canvasElement.getBoundingClientRect(); 
             const scaleX = canvasElement.width / rect.width;   
             const scaleY = canvasElement.height / rect.height;  
             let clientX, clientY;
-
-            if (eventOrTouch.clientX !== undefined && eventOrTouch.clientY !== undefined) { 
-                clientX = eventOrTouch.clientX;
-                clientY = eventOrTouch.clientY;
-            } else if (eventOrTouch.touches && eventOrTouch.touches.length > 0) { 
-                 clientX = eventOrTouch.touches[0].clientX; 
-                 clientY = eventOrTouch.touches[0].clientY;
-            } else {
-                return null; 
-            }
-            
-            const x = (clientX - rect.left) * scaleX;
-            const y = (clientY - rect.top) * scaleY;
-            return { x, y }; // These are now in the NATIVE_WIDTH/HEIGHT coordinate space
+            if (eventOrTouch.clientX !== undefined) { clientX = eventOrTouch.clientX; clientY = eventOrTouch.clientY; } 
+            else if (eventOrTouch.touches && eventOrTouch.touches.length > 0) { clientX = eventOrTouch.touches[0].clientX; clientY = eventOrTouch.touches[0].clientY;} 
+            else { return null; }
+            return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
         }
 
         function isPointInRect(point, rect) {
-            // rect is defined in NATIVE coordinates, point is transformed to NATIVE coordinates
-            return point.x >= rect.x && point.x <= rect.x + rect.width &&
-                   point.y >= rect.y && point.y <= rect.y + rect.height;
+            return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
         }
         
         function addInputListeners() {
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = true;
                 if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = true;
-                if (e.key === ' ') {
-                    keys.space = true;
-                    e.preventDefault(); 
-                }
+                if (e.key === ' ') { keys.space = true; e.preventDefault(); }
             });
-
             window.addEventListener('keyup', (e) => {
                 if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = false;
                 if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = false;
@@ -283,140 +248,98 @@
             if (isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) { 
                 canvas.addEventListener('touchstart', (e) => {
                     e.preventDefault();
+                    // Try to start BGM on first touch if not already playing (for autoplay policy)
+                    if (!bgmPlaying && bgmSound.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA && bgmSound.paused) {
+                        bgmSound.play().then(() => { bgmPlaying = true; console.log("BGM started on touch."); }).catch(err => console.warn("BGM play on touch failed:", err));
+                    }
+
                     const touches = e.changedTouches;
                     for (let i = 0; i < touches.length; i++) {
-                        const touch = touches[i];
-                        const touchId = touch.identifier;
-                        const pos = getCanvasCoordinates(touch, canvas);
+                        const touch = touches[i], touchId = touch.identifier, pos = getCanvasCoordinates(touch, canvas);
                         if (!pos) continue;
-
-                        if (gameOver || gameWon) { 
-                            if (isPointInRect(pos, restartButton)) {
-                                initializeGame();
-                                return; 
-                            }
-                        } else { 
-                            for (const btnKey in touchControls) {
-                                const button = touchControls[btnKey];
-                                if (isPointInRect(pos, button)) {
-                                    keys[button.key] = true;
-                                    activeTouches[touchId] = button.key;
-                                    break; 
-                                }
-                            }
-                        }
+                        if (gameOver || gameWon) { if (isPointInRect(pos, restartButton)) { initializeGame(); return; }} 
+                        else { for (const k in touchControls) { if (isPointInRect(pos, touchControls[k])) { keys[touchControls[k].key] = true; activeTouches[touchId] = touchControls[k].key; break; }}}
                     }
                 }, { passive: false });
-
                 canvas.addEventListener('touchend', (e) => {
                     e.preventDefault();
                     const touches = e.changedTouches;
                     for (let i = 0; i < touches.length; i++) {
-                        const touch = touches[i];
-                        const touchId = touch.identifier;
-                        const buttonKey = activeTouches[touchId];
-                        if (buttonKey) {
-                            keys[buttonKey] = false;
-                            delete activeTouches[touchId];
-                        }
+                        const touch = touches[i], touchId = touch.identifier, k = activeTouches[touchId];
+                        if (k) { keys[k] = false; delete activeTouches[touchId]; }
                     }
                 }, { passive: false });
-
-                 canvas.addEventListener('touchcancel', (e) => { 
-                    e.preventDefault();
-                    const touches = e.changedTouches;
-                    for (let i = 0; i < touches.length; i++) {
-                        const touch = touches[i];
-                        const touchId = touch.identifier;
-                        const buttonKey = activeTouches[touchId];
-                        if (buttonKey) {
-                            keys[buttonKey] = false;
-                            delete activeTouches[touchId];
-                        }
-                    }
-                }, { passive: false });
+                canvas.addEventListener('touchcancel', (e) => { /* Same as touchend */ e.preventDefault(); const touches = e.changedTouches; for (let i = 0; i < touches.length; i++) { const touch = touches[i], touchId = touch.identifier, k = activeTouches[touchId]; if (k) { keys[k] = false; delete activeTouches[touchId]; }}}, { passive: false });
             }
-
             canvas.addEventListener('click', (e) => {
-                if (gameOver || gameWon) {
-                    const pos = getCanvasCoordinates(e, canvas);
-                    if (pos && isPointInRect(pos, restartButton)) {
-                        initializeGame();
-                    }
+                 // Try to start BGM on first click if not already playing
+                if (!bgmPlaying && bgmSound.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA && bgmSound.paused) {
+                    bgmSound.play().then(() => { bgmPlaying = true; console.log("BGM started on click."); }).catch(err => console.warn("BGM play on click failed:", err));
                 }
+                if (gameOver || gameWon) { const pos = getCanvasCoordinates(e, canvas); if (pos && isPointInRect(pos, restartButton)) initializeGame(); }
             });
         }
 
-
         function spawnMonster() {
             if (!fireMonsterImage.complete || fireMonsterImage.naturalWidth === 0) return; 
-            
-            const monsterOriginalWidth = fireMonsterImage.naturalWidth;
-            const monsterOriginalHeight = fireMonsterImage.naturalHeight;
-            const monsterWidth = monsterOriginalWidth * SPRITE_SCALE_FACTOR;
-            const monsterHeight = monsterOriginalHeight * SPRITE_SCALE_FACTOR;
-            
-            const minSpawnX = MONSTER_SPAWN_HORIZONTAL_PADDING;
-            const maxSpawnX = NATIVE_WIDTH - monsterWidth - MONSTER_SPAWN_HORIZONTAL_PADDING;
-            const spawnableWidth = maxSpawnX - minSpawnX;
-            
-            let x = (spawnableWidth > 0) ? (minSpawnX + Math.random() * spawnableWidth) : (NATIVE_WIDTH / 2 - monsterWidth / 2);
-            const y = 0 - monsterHeight; 
-            monsters.push({ x, y, width: monsterWidth, height: monsterHeight, image: fireMonsterImage, speed: MONSTER_BASE_SPEED + Math.random() * 1.8 });
+            const monsterW = fireMonsterImage.naturalWidth*SPRITE_SCALE_FACTOR, monsterH = fireMonsterImage.naturalHeight*SPRITE_SCALE_FACTOR;
+            const minX = MONSTER_SPAWN_HORIZONTAL_PADDING, maxX = NATIVE_WIDTH - monsterW - minX, spawnW = maxX - minX;
+            let x = (spawnW > 0) ? (minX + Math.random() * spawnW) : (NATIVE_WIDTH / 2 - monsterW / 2);
+            monsters.push({ x, y: -monsterH, width: monsterW, height: monsterH, image: fireMonsterImage, speed: MONSTER_BASE_SPEED + Math.random() * 1.8 });
         }
 
         function shootWater() {
-            const nozzleXOffset = player.width * 0.25; 
+            const nozzleXOffset = player.width * 0.33; // Updated
             const nozzleYOffset = player.height * 0.55; 
             const nozzleX = player.x + nozzleXOffset; 
             const nozzleY = player.y + nozzleYOffset;
-
             for (let i = 0; i < PARTICLES_PER_FRAME_WHILE_SHOOTING; i++) {
-                waterParticles.push({
-                    x: nozzleX - WATER_PARTICLE_SIZE / 2 + (Math.random() - 0.5) * SHOT_SPREAD,
-                    y: nozzleY - (i * WATER_PARTICLE_SIZE * 0.7) - WATER_PARTICLE_SIZE / 2, 
-                    width: WATER_PARTICLE_SIZE,
-                    height: WATER_PARTICLE_SIZE,
-                    color: 'rgb(0, 200, 200)' 
-                });
+                waterParticles.push({ x: nozzleX - WATER_PARTICLE_SIZE/2 + (Math.random()-0.5)*SHOT_SPREAD, y: nozzleY - (i*WATER_PARTICLE_SIZE*0.7) - WATER_PARTICLE_SIZE/2, width: WATER_PARTICLE_SIZE, height: WATER_PARTICLE_SIZE, color: 'rgb(0,200,200)' });
             }
         }
 
         function update(currentTime) { 
             if (gameOver || gameWon) {
+                if (bgmPlaying) { bgmSound.pause(); bgmPlaying = false; }
+                if (shootingSoundPlaying) { shootSound.pause(); shootingSoundPlaying = false; }
                 return;
             }
+            // Ensure BGM is playing if it should be
+            if (!bgmPlaying && bgmSound.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA && bgmSound.paused) {
+                 bgmSound.play().then(() => { bgmPlaying = true; }).catch(err => {/* Autoplay likely prevented, wait for interaction */});
+            }
+
 
             if (keys.left) player.x -= PLAYER_SPEED;
             if (keys.right) player.x += PLAYER_SPEED;
             if (player.x < 0) player.x = 0;
             if (player.x + player.width > NATIVE_WIDTH) player.x = NATIVE_WIDTH - player.width;
 
-            if (keys.space) shootWater();
+            if (keys.space) {
+                shootWater();
+                if (!shootingSoundPlaying && shootSound.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+                    shootSound.play().then(() => shootingSoundPlaying = true).catch(e => console.warn("Shoot sound play failed", e));
+                }
+            } else {
+                if (shootingSoundPlaying) {
+                    shootSound.pause();
+                    // shootSound.currentTime = 0; // Optional: reset sound to beginning
+                    shootingSoundPlaying = false;
+                }
+            }
 
             for (let i = waterParticles.length - 1; i >= 0; i--) {
                 waterParticles[i].y -= WATER_PARTICLE_SPEED;
                 if (waterParticles[i].y + waterParticles[i].height < 0) waterParticles.splice(i, 1); 
             }
-
-            if (currentTime - lastMonsterSpawnTime > MONSTER_SPAWN_INTERVAL) {
-                spawnMonster();
-                lastMonsterSpawnTime = currentTime;
-            }
-
+            if (currentTime - lastMonsterSpawnTime > MONSTER_SPAWN_INTERVAL) { spawnMonster(); lastMonsterSpawnTime = currentTime; }
             for (let i = monsters.length - 1; i >= 0; i--) {
-                const monster = monsters[i];
-                monster.y += monster.speed;
-                if (monster.y + monster.height >= NATIVE_HEIGHT) { 
-                    gameOver = true; return; 
-                }
+                const m = monsters[i]; m.y += m.speed;
+                if (m.y + m.height >= NATIVE_HEIGHT) { gameOver = true; return; }
                 for (let j = waterParticles.length - 1; j >= 0; j--) {
-                    const particle = waterParticles[j];
-                    if (particle.x < monster.x + monster.width && particle.x + particle.width > monster.x &&
-                        particle.y < monster.y + monster.height && particle.y + particle.height > monster.y) {
-                        monsters.splice(i, 1);      
-                        waterParticles.splice(j, 1); 
-                        score++;
+                    const p = waterParticles[j];
+                    if (p.x < m.x + m.width && p.x + p.width > m.x && p.y < m.y + m.height && p.y + p.height > m.y) {
+                        monsters.splice(i, 1); waterParticles.splice(j, 1); score++;
                         if (score >= WIN_SCORE) gameWon = true;
                         break; 
                     }
@@ -424,85 +347,41 @@
             }
         }
         
-        function drawButton(buttonCtx, btn) {
-            // All drawing happens in NATIVE coordinate space
-            buttonCtx.fillStyle = btn.color || BUTTON_COLOR;
-            buttonCtx.fillRect(btn.x, btn.y, btn.width, btn.height);
-            buttonCtx.fillStyle = btn.textColor || BUTTON_TEXT_COLOR;
-            buttonCtx.font = btn.font || BUTTON_FONT;
-            buttonCtx.textAlign = "center";
-            buttonCtx.textBaseline = "middle";
-            buttonCtx.fillText(btn.label, btn.x + btn.width / 2, btn.y + btn.height / 2);
+        function drawButton(ctx, btn) {
+            ctx.fillStyle = btn.color || BUTTON_COLOR; ctx.fillRect(btn.x, btn.y, btn.width, btn.height);
+            ctx.fillStyle = btn.textColor || BUTTON_TEXT_COLOR; ctx.font = btn.font || BUTTON_FONT;
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(btn.label, btn.x + btn.width / 2, btn.y + btn.height / 2);
         }
 
         function draw() {
-            ctx.clearRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT); // Clear the NATIVE_WIDTH x NATIVE_HEIGHT buffer
-
-            if (backgroundImage.complete && backgroundImage.naturalWidth > 0) {
-                ctx.drawImage(backgroundImage, 0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
-            } else {
-                ctx.fillStyle = 'white'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
-                ctx.fillText('Loading assets...', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 30);
-            }
-
-            if (player.image && player.image.complete && player.image.naturalWidth > 0) {
-                ctx.drawImage(player.image, player.x, player.y, player.width, player.height);
-            }
-
-            monsters.forEach(monster => {
-                if (monster.image && monster.image.complete && monster.image.naturalWidth > 0) {
-                    ctx.drawImage(monster.image, monster.x, monster.y, monster.width, monster.height);
-                }
-            });
-
-            waterParticles.forEach(particle => {
-                ctx.fillStyle = particle.color;
-                ctx.fillRect(particle.x, particle.y, particle.width, particle.height);
-            });
-
-            ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
-            ctx.font = '48px "Arial Black", Gadget, sans-serif';
-            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-            ctx.strokeText('Score: ' + score, 20, 20);
-            ctx.fillText('Score: ' + score, 20, 20);
-
-            if ((isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) && !gameOver && !gameWon) {
-                for (const btnKey in touchControls) {
-                    drawButton(ctx, touchControls[btnKey]);
-                }
-            }
-
+            ctx.clearRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT); 
+            if (backgroundImage.complete && backgroundImage.naturalWidth > 0) ctx.drawImage(backgroundImage, 0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
+            else { ctx.fillStyle='white'; ctx.font='30px Arial'; ctx.textAlign='center'; ctx.fillText('Loading assets...', NATIVE_WIDTH/2, NATIVE_HEIGHT/2-30); }
+            if (player.image && player.image.complete && player.image.naturalWidth > 0) ctx.drawImage(player.image, player.x, player.y, player.width, player.height);
+            monsters.forEach(m => { if (m.image && m.image.complete && m.image.naturalWidth > 0) ctx.drawImage(m.image, m.x, m.y, m.width, m.height); });
+            waterParticles.forEach(p => { ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.width, p.height); });
+            ctx.fillStyle='white'; ctx.strokeStyle='black'; ctx.lineWidth=2; ctx.font='48px "Arial Black"'; ctx.textAlign='left'; ctx.textBaseline='top';
+            ctx.strokeText('Score: ' + score, 20, 20); ctx.fillText('Score: ' + score, 20, 20);
+            if ((isTouchDevice || DEBUG_ALWAYS_SHOW_TOUCH_CONTROLS) && !gameOver && !gameWon) { for (const k in touchControls) drawButton(ctx, touchControls[k]); }
             if (gameOver) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'; ctx.fillRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
-                ctx.font = '90px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'red';
-                ctx.strokeText('GAME OVER!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
-                ctx.fillText('GAME OVER!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
-                ctx.font = '50px Arial'; ctx.fillStyle = 'white';
-                ctx.strokeText('Killed: ' + score + ' / ' + WIN_SCORE, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
-                ctx.fillText('Killed: ' + score + ' / ' + WIN_SCORE, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
+                ctx.fillStyle='rgba(0,0,0,0.75)'; ctx.fillRect(0,0,NATIVE_WIDTH,NATIVE_HEIGHT); ctx.font='90px "Arial Black"'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillStyle='red'; ctx.strokeText('GAME OVER!',NATIVE_WIDTH/2,NATIVE_HEIGHT/2-70); ctx.fillText('GAME OVER!',NATIVE_WIDTH/2,NATIVE_HEIGHT/2-70);
+                ctx.font='50px Arial'; ctx.fillStyle='white'; ctx.strokeText('Killed: '+score+' / '+WIN_SCORE,NATIVE_WIDTH/2,NATIVE_HEIGHT/2+20); ctx.fillText('Killed: '+score+' / '+WIN_SCORE,NATIVE_WIDTH/2,NATIVE_HEIGHT/2+20);
                 drawButton(ctx, restartButton); 
             } else if (gameWon) {
-                ctx.fillStyle = 'rgba(0, 80, 0, 0.75)'; ctx.fillRect(0, 0, NATIVE_WIDTH, NATIVE_HEIGHT);
-                ctx.font = '90px "Arial Black"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillStyle = '#33FF33';
-                ctx.strokeText('YOU WIN!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
-                ctx.fillText('YOU WIN!', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 - 70);
-                ctx.font = '50px Arial'; ctx.fillStyle = 'white';
-                ctx.strokeText('Final Score: ' + score, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
-                ctx.fillText('Final Score: ' + score, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 20);
+                ctx.fillStyle='rgba(0,80,0,0.75)'; ctx.fillRect(0,0,NATIVE_WIDTH,NATIVE_HEIGHT); ctx.font='90px "Arial Black"'; ctx.textAlign='center'; ctx.textBaseline='middle';
+                ctx.fillStyle='#33FF33'; ctx.strokeText('YOU WIN!',NATIVE_WIDTH/2,NATIVE_HEIGHT/2-70); ctx.fillText('YOU WIN!',NATIVE_WIDTH/2,NATIVE_HEIGHT/2-70);
+                ctx.font='50px Arial'; ctx.fillStyle='white'; ctx.strokeText('Final Score: '+score,NATIVE_WIDTH/2,NATIVE_HEIGHT/2+20); ctx.fillText('Final Score: '+score,NATIVE_WIDTH/2,NATIVE_HEIGHT/2+20);
                 drawButton(ctx, restartButton); 
             }
         }
 
         function gameLoop(timestamp) { 
-            if (imagesToLoad === 0) { 
-                update(timestamp); 
-                draw();
-            } else {
-                ctx.fillStyle = '#333'; ctx.fillRect(0,0,NATIVE_WIDTH, NATIVE_HEIGHT);
-                ctx.fillStyle = 'white'; ctx.font = '30px Arial'; ctx.textAlign = 'center';
-                ctx.fillText(`Loading assets... (${3 - imagesToLoad}/3)`, NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2);
+            if (assetsLoaded === assetsToLoad) { update(timestamp); draw(); } 
+            else { 
+                ctx.fillStyle='#333'; ctx.fillRect(0,0,NATIVE_WIDTH,NATIVE_HEIGHT); ctx.fillStyle='white'; ctx.font='30px Arial'; ctx.textAlign='center';
+                ctx.fillText(`Loading assets... (${assetsLoaded}/${assetsToLoad})`, NATIVE_WIDTH/2, NATIVE_HEIGHT/2);
             }
             requestAnimationFrame(gameLoop);
         }
